@@ -1,0 +1,4 @@
+# frida-sys runs bindgen, which needs libclang.  Set here so a plain
+# `cargo build` works; an existing LIBCLANG_PATH in the environment wins.
+[env]
+LIBCLANG_PATH = { value = 'C:\Program Files\LLVM\bin', force = false }
