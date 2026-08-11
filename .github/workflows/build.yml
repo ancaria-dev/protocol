@@ -1,0 +1,69 @@
+# GitHub only runs workflows from .github/workflows/, so the file lives one
+# directory deeper than the sketch of this layout said.
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Windows because the thing being built attaches to a Windows game; there is
+    # nothing to gain from a Linux job that cannot run what it produces.
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The publish gate asks the remote whether this version's tag exists.
+          fetch-depth: 0
+
+      - name: Install LLVM
+        # frida-sys runs bindgen, which needs libclang.
+        run: choco install llvm --no-progress -y
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --check
+        continue-on-error: true
+
+      - run: cargo build --release
+
+      # Self-contained: the bundler tests use this repository's own fixture
+      # agent, and the end-to-end test skips itself when no coderpack jars are
+      # on the machine.
+      - run: cargo test --release
+
+      - name: Version and whether it is new
+        id: gate
+        shell: bash
+        run: |
+          version=$(grep -m1 -E '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "v$version is already published; nothing to do"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "v$version is new"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: protocol
+          path: target/release/protocol.exe
+
+      # Creates the tag as well, which is what the gate above reads next time.
+      # The launcher downloads this asset when it is built without a protocol
+      # checkout beside it.
+      - name: Release
+        if: steps.gate.outputs.publish == 'true' && github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.gate.outputs.version }}
+          files: target/release/protocol.exe
