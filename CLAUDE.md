@@ -198,7 +198,9 @@ On a push to `master`, CI reads `version` from `Cargo.toml`. If the remote has
 no `v<version>` tag, the release step creates that tag and uploads
 `target/release/protocol.exe` as the release asset. Raising the version is what
 ships a release. The launcher downloads this asset when no sibling protocol
-checkout is available.
+checkout is available. `tools/version.ps1` prints the current version with no
+argument, or raises it in `Cargo.toml` and the matching `Cargo.lock` entry with
+`pwsh tools/version.ps1 0.99.1`.
 
 ## Running and path discovery
 
