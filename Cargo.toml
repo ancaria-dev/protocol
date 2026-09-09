@@ -4,6 +4,10 @@ version = "0.99.0"
 edition = "2024"
 description = "Injects the Coderpack agent into Sacred Gold and runs the mod JVM"
 
+[build-dependencies]
+# Reads the release pinned in dependencies.json and writes the hook manifest.
+serde_json = "1"
+
 [dependencies]
 anyhow = "1"
 # Patched copy, see vendor/README.md. Upstream 0.17.2 faults on

@@ -1,5 +1,8 @@
 /target/
 
+# The agent.zip an isolated build downloads, unpacked. Generated, cached.
+/build/
+
 .idea/
 *.iml
 .vscode/*

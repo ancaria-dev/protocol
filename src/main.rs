@@ -8,6 +8,10 @@
 mod agent;
 mod codec;
 mod job;
+// Shared with build.rs, which minifies the agent with the same code that reads
+// the hook names out of a folder here.
+#[allow(dead_code)]
+mod js;
 mod jvm;
 mod router;
 
@@ -38,7 +42,9 @@ const VERDICT_DEADLINE: Duration = Duration::from_millis(250);
 const GAME_PROCESSES: [&str; 3] = ["pureHD.exe", "Sacred.exe", "Game.exe"];
 
 struct Config {
-    agent: PathBuf,
+    /// A folder to read the agent out of instead of the one built into this
+    /// executable. None is the normal case.
+    agent: Option<PathBuf>,
     classpath: String,
     mods: PathBuf,
     java: PathBuf,
@@ -47,13 +53,16 @@ struct Config {
     ask: bool,
     no_hook: Vec<String>,
     trace: bool,
+    /// Print the hook sites as JSON and stop. What the launcher draws its list
+    /// of switchable sites from, now that there is no agent folder to read.
+    hooks: bool,
     /// Mod ids the launcher ticked. None means every jar in the folder.
     enable: Option<String>,
 }
 
 impl Config {
     fn from_args() -> Result<Config> {
-        let mut agent = default_agent();
+        let mut agent = None;
         let mut dist = default_dist();
         let mut mods: Option<PathBuf> = None;
         let mut java = java_path();
@@ -62,40 +71,41 @@ impl Config {
         let mut ask = true;
         let mut no_hook = Vec::new();
         let mut trace = false;
+        let mut hooks = false;
         let mut enable = None;
 
         let args: Vec<String> = std::env::args().skip(1).collect();
         let mut i = 0;
         while i < args.len() {
             let value = args.get(i + 1).cloned().unwrap_or_default();
-            match args[i].as_str() {
-                "--agent" => agent = PathBuf::from(value),
-                "--dist" => dist = PathBuf::from(value),
-                "--mods" => mods = Some(PathBuf::from(value)),
-                "--enable" => enable = Some(value),
-                "--java" => java = PathBuf::from(value),
-                "--skip" => skip = value.split(',').map(str::to_string).collect(),
-                "--only" => only = value.split(',').map(str::to_string).collect(),
+            // Every argument is either a flag on its own or a name and a value,
+            // and how far to step is decided per argument rather than by
+            // walking back one: `protocol.exe --trace` used to step off the
+            // front of the list, which a release build only survived because it
+            // wraps around instead of panicking.
+            let step = match args[i].as_str() {
+                "--agent" => { agent = Some(PathBuf::from(value)); 2 }
+                "--dist" => { dist = PathBuf::from(value); 2 }
+                "--mods" => { mods = Some(PathBuf::from(value)); 2 }
+                "--enable" => { enable = Some(value); 2 }
+                "--java" => { java = PathBuf::from(value); 2 }
+                "--skip" => { skip = value.split(',').map(str::to_string).collect(); 2 }
+                "--only" => { only = value.split(',').map(str::to_string).collect(); 2 }
                 "--no-hook" => {
                     no_hook = value.split(',').map(str::to_string).collect();
+                    2
                 }
-                "--trace" => {
-                    trace = true;
-                    i -= 1;   // a flag, not a pair
-                }
-                "--no-ask" => {
-                    ask = false;
-                    i -= 1;   // a flag, not a pair
-                }
+                "--trace" => { trace = true; 1 }
+                "--no-ask" => { ask = false; 1 }
+                "--hooks" => { hooks = true; 1 }
                 other => return Err(anyhow!("Unknown argument: {other}")),
-            }
-            i += 2;
+            };
+            i += step;
         }
 
         // Paths are relative to the executable unless they resolve from the
         // working directory, so dropping the installed folder into the game and
         // double clicking the exe works without arguments.
-        let agent = beside_exe(agent);
         let dist = beside_exe(dist);
 
         let classpath = format!(
@@ -104,30 +114,8 @@ impl Config {
             dist.join("zygote.jar").display()
         );
         Ok(Config { agent, classpath,
-                    mods: mods.unwrap_or_else(|| default_mods(&dist)), java, skip, only, ask, no_hook, trace, enable })
+                    mods: mods.unwrap_or_else(|| default_mods(&dist)), java, skip, only, ask, no_hook, trace, hooks, enable })
     }
-}
-
-/// Where the bundled agent lives: next to the executable when installed, or in
-/// the working tree when run from a checkout.  Identified by the generated
-/// address table, which is the one file that is always there.
-fn default_agent() -> PathBuf {
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .unwrap_or_default();
-    let candidates = [
-        exe_dir.join("agent"),
-        // Running from a checkout: the agent is the coderpack repository's,
-        // next door.
-        PathBuf::from("../coderpack/agent/src"),
-        PathBuf::from("agent/src"),
-    ];
-    candidates
-        .iter()
-        .find(|dir| dir.join("gen/addr.js").is_file())
-        .cloned()
-        .unwrap_or_else(|| PathBuf::from("agent"))
 }
 
 /// Where the jars live.  "." always exists, so it cannot be a default.  The
@@ -201,9 +189,23 @@ fn version() -> String {
 
 fn main() -> Result<()> {
     let config = Config::from_args()?;
+
+    // Answered before anything is started: the launcher asks this of the copy
+    // in the game folder while it draws its window, and there is no game, no
+    // JVM and no Frida device involved in the answer.
+    if config.hooks {
+        println!("{}", agent::manifest(config.agent.as_deref())?);
+        return Ok(());
+    }
+
     println!("[host] Sacred Mod Loader {}", version());
-    let source = agent::bundle(&config.agent, &config.skip, &config.only, config.ask, &config.no_hook, config.trace)?;
-    println!("[host] Agent bundled: {} bytes{}", source.len(),
+    let source = agent::bundle(config.agent.as_deref(), &config.skip, &config.only,
+                               config.ask, &config.no_hook, config.trace)?;
+    println!("[host] Agent bundled: {} bytes from {}{}", source.len(),
+             match &config.agent {
+                 Some(dir) => dir.display().to_string(),
+                 None => agent::origin().to_string(),
+             },
              if config.ask { "" } else { " (verdicts disabled)" });
 
     let pending = Pending::default();
