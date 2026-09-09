@@ -40,7 +40,9 @@ fn main() {
 
 /// Finds a directory holding the agent, and says where it came from.
 fn locate(manifest: &Path) -> (PathBuf, String) {
-    if let Ok(path) = env::var("PROTOCOL_AGENT") {
+    if let Ok(path) = env::var("PROTOCOL_AGENT").map(|value| value.trim().to_string())
+        && !path.is_empty()
+    {
         let dir = PathBuf::from(&path);
         if !dir.join("gen/addr.js").is_file() {
             panic!(
