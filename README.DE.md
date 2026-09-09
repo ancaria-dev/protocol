@@ -30,6 +30,12 @@ Klassenpfad und vermittelt anschließend in beide Richtungen. Dabei wird keine
 Spieldatei verändert. Die Hooks liegen nur im Arbeitsspeicher und verschwinden
 mit dem Spielprozess.
 
+Das JavaScript des Agenten steckt in dieser Programmdatei: Die Module werden
+beim Build minifiziert und eingebunden, und das von Frida injizierte Skript
+entsteht daraus im Arbeitsspeicher. Weder im Spielordner noch in einem
+temporären Verzeichnis wird JavaScript abgelegt. `--agent <Pfad>` liest
+weiterhin einen Ordner, was beim Bearbeiten des Agenten gebraucht wird.
+
 ## Starten
 
 Im Normalbetrieb startet der Launcher den Host. Aus dem installierten
@@ -41,9 +47,9 @@ Verzeichnis lässt er sich auch direkt aufrufen:
 
 Läuft das Spiel mit Administratorrechten, braucht auch der Host erhöhte Rechte.
 Andernfalls kann Frida trotz sichtbarem Prozess nicht anhängen und der Host
-wartet unbegrenzt. Ohne Argumente sucht er Agent, JAR-Dateien und Java-Laufzeit
-neben `protocol.exe` beziehungsweise in den dafür vorgesehenen
-Standardverzeichnissen.
+wartet unbegrenzt. Den Agenten bringt er mit; JAR-Dateien und Java-Laufzeit
+sucht er ohne Argumente neben `protocol.exe` beziehungsweise in den dafür
+vorgesehenen Standardverzeichnissen.
 
 ## Format der Verbindung
 
@@ -114,6 +120,8 @@ versuchen, eine bereits gehookte Instruktion erneut zu verändern.
 | `--no-hook goldEpilogue` | das Modul behalten, aber diese Hook-Stelle nicht anbinden |
 | `--trace` | jeden Hook melden, sobald er ausgelöst wird |
 | `--no-ask` | Hooks installieren, aber Verdikte abschalten |
+| `--agent <Pfad>` | den Agenten aus einem Ordner lesen statt aus der Programmdatei |
+| `--hooks` | die Hook-Stellen als JSON ausgeben und beenden |
 
 Modulnamen sind die Dateinamen des Agenten ohne Zahlenpräfix. `--agent`,
 `--dist`, `--mods` und `--java` überschreiben die ermittelten Pfade. Mit
@@ -123,13 +131,23 @@ Dort legt der Launcher ein heruntergeladenes JDK ab. Danach prüft er
 `%JAVA_HOME%\bin\java.exe` und zuletzt `java` im `PATH`. Der Launcher übergibt
 seine heruntergeladene Java-Laufzeit normalerweise ausdrücklich mit `--java`.
 Ein echter Host-Lauf benötigt JDK 21 oder neuer. Ein unbekanntes Argument
-beendet den Start mit einem Fehler.
+beendet den Start mit einem Fehler. Seine Liste abschaltbarer Hook-Stellen holt
+der Launcher mit `--hooks` von der `protocol.exe` im Spielordner, denn nur die
+weiß, welcher Agent in ihr steckt.
 
 ## Bauen
 
 ```
 cargo build --release
 ```
+
+Der Build braucht den Agenten und nimmt ihn aus der ersten Quelle, die er
+findet: `$PROTOCOL_AGENT`, das benachbarte `../coderpack/agent/src` oder das
+Asset `agent.zip` des in `dependencies.json` festgelegten coderpack-Releases,
+zwischengespeichert unter `build/agent/`. Die dritte Quelle macht den Build
+eines einzelnen Klons möglich: Coderpack erzeugt seine Adresstabelle, statt sie
+einzuchecken, sodass ein Checkout nicht immer genügt und ein Release-Asset immer.
+Aus welcher Quelle gebaut wurde, meldet der Host beim Start.
 
 Das Ergebnis liegt unter `target/release/protocol.exe`. Für den Build werden
 Rust 1.98 mit der MSVC-Toolchain und eine LLVM-Installation benötigt.
@@ -153,9 +171,11 @@ Nachricht. Ein laufendes Spiel ist nicht nötig:
 cargo run --example message_check
 ```
 
-`cargo test --release` führt derzeit sechs Tests für Frame-Codec, Agent-Bundler
-und JVM-Grenze aus. Die beiden Bundle-Tests verwenden den Fixture-Agenten aus
-`tests/agent` und greifen nie auf `../coderpack` zu. Der End-to-End-Test startet
+`cargo test --release` führt derzeit neunzehn Tests für Frame-Codec,
+Minifizierer, Agent-Bundler und JVM-Grenze aus. Die Bundle-Tests, die einen
+Ordner lesen, verwenden den Fixture-Agenten aus `tests/agent` und greifen nie
+auf `../coderpack` zu; die übrigen prüfen den eingebundenen Agenten, aus welcher
+Quelle er auch stammt. Der End-to-End-Test startet
 eine echte Coderpack-JVM ohne Mods und prüft, ob jedes `ASK` mit einem lesbaren
 Frame beantwortet wird. Er wählt die lexikalisch neuesten `api`- und
 `zygote`-JAR-Dateien unter `../coderpack/*/build/libs` oder im lokalen

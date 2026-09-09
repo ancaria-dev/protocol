@@ -31,8 +31,10 @@ still describes planned behavior.
 
 | Path | Responsibility |
 |---|---|
+| `build.rs` | Stages the agent, minifies it, and links it in with the hook manifest |
 | `src/main.rs` | Argument parsing, path discovery, game attach loop, the sole Frida poster loop named `pump`, and the verdict watchdog |
 | `src/agent.rs` | Builds the single JavaScript source string injected by Frida |
+| `src/js.rs` | The minifier and the hook-site reader, shared with `build.rs` |
 | `src/codec.rs` | Frame encoding, decoding, percent-encoding, codec tests, and the JVM end-to-end test |
 | `src/router.rs` | Converts Frida agent messages to frames, tracks pending asks, and converts JVM frames to work for `pump` |
 | `src/jvm.rs` | Starts the Java child and owns separate stdout-reader and stdin-writer threads |
@@ -40,9 +42,51 @@ still describes planned behavior.
 | `examples/message_check.rs` | Regression check for the vendored Frida callback fix |
 | `vendor/frida` | Patched copy of `frida` 0.17.2, documented in `vendor/README.md` |
 
-`Config` identifies directories by required files, including
-`agent/gen/addr.js` and `zygote.jar`. Do not use directory existence as the
-test because `.` always exists.
+`Config` identifies the distribution directory by `zygote.jar` being in it. Do
+not use directory existence as the test because `.` always exists. There is no
+agent directory to discover any more: the modules are inside the executable.
+
+## The embedded agent
+
+`build.rs` reads the agent, minifies each module, and writes the table
+`src/agent.rs` links with `include_str!`. `bundle` then assembles the injected
+script in memory. Nothing writes JavaScript to the game folder, to a temporary
+directory, or anywhere else, and there is no second copy of the agent to go
+stale against the binary that loads it.
+
+The source is the first of these that answers:
+
+1. `$PROTOCOL_AGENT`, which is what `launcher/tools/build.ps1` passes when it
+   builds this repository from a checkout.
+2. The sibling `../coderpack/agent/src`.
+3. The `agent.zip` asset of the coderpack release pinned in
+   `dependencies.json`, cached under `build/agent/<version>/`.
+
+The third is what makes a lone clone build, and it is why this repository has a
+`dependencies.json` at all: coderpack generates `gen/addr.js` rather than
+committing it, so a checkout is not always enough and a release asset always is.
+A sibling that has the modules but no `gen/addr.js` falls back to the pinned
+release with a `cargo:warning` saying so, because building somebody's edited
+agent out of a release without a word is how a change appears not to have taken.
+`agent::origin()` names the source, and the host prints it at startup.
+
+Minification is `js::compact`, and it is deliberately the smallest thing that
+counts as one: comments, indentation and blank lines out, runs of spaces
+collapsed, everything else untouched. No renaming, no reordering, no dropping of
+a declaration, and no joining of lines. Every module shares one scope, so a
+minifier that decided a top-level function was unused would produce a bundle
+that loads and silently does less. Line breaks stay because automatic semicolon
+insertion is part of the language. No source map is produced or shipped.
+
+`--agent <path>` reads a folder instead, unminified, which is what somebody
+editing the agent wants: change a file, restart the host, no rebuild. It is an
+explicit flag and not a search: a stale `agent` folder left in a game folder by
+an older install must never quietly win over the agent in the binary.
+
+`--hooks` prints the hook manifest as JSON and exits before anything is started.
+`build.rs` reads it out of the sources before they are minified, so the names in
+it are the names in the checkout. The launcher asks the `protocol.exe` in the
+game folder for it, because that is what knows which agent is in it.
 
 ## Wire invariants
 
@@ -168,9 +212,12 @@ cargo run --example message_check
 ```
 
 `cargo build --release` writes `target/release/protocol.exe`.
-`cargo test --release` currently runs six tests. The two bundler tests use this
-repository's `tests/agent` fixture, including its generated address table, and
-never read `../coderpack`.
+`cargo test --release` currently runs nineteen tests. The folder-reading bundler
+tests use this repository's `tests/agent` fixture, including its generated
+address table, and never read `../coderpack`. The rest check the agent that was
+linked in, whichever of the three sources it came from: that it loads in the
+right order, that it kept `core`, `bus` and `names`, that it arrived minified,
+and that the hook manifest names modules and sites.
 
 `codec::endtoend::zygote_answers_every_ask` starts a real Coderpack JVM with no
 mods. It selects the lexically newest `api` and `zygote` JARs it can find under
@@ -211,10 +258,9 @@ installed layout, the host can also run with no arguments:
 <Sacred Gold>\launcher\protocol.exe
 ```
 
-Default agent candidates are `<exe>\agent`, `../coderpack/agent/src`, and
-`agent/src`, selected by the presence of `gen/addr.js`. Distribution
-candidates are the executable directory, `dist`, and `.`, selected by the
-presence of `zygote.jar`. Installed mods live at
+The agent comes from inside the executable unless `--agent` says otherwise.
+Distribution candidates are the executable directory, `dist`, and `.`, selected
+by the presence of `zygote.jar`. Installed mods live at
 `<Sacred Gold>\mods`, one level above `<Sacred Gold>\launcher`.
 
 Without `--java`, the host first checks `java/bin/java.exe` beside
@@ -230,7 +276,8 @@ launcher installs downloaded Java under
 | `--no-hook goldEpilogue` | Keeps the module but skips that attach site |
 | `--trace` | Logs each hook when it fires |
 | `--no-ask` | Installs hooks but disables verdict waits |
-| `--agent <path>` | Overrides the agent source directory |
+| `--hooks` | Prints the hook manifest as JSON and exits |
+| `--agent <path>` | Reads the agent from a directory instead of the built-in one |
 | `--dist <path>` | Overrides the JAR directory |
 | `--mods <path>` | Overrides the mods directory |
 | `--java <path>` | Overrides the Java executable |
@@ -244,15 +291,18 @@ in lexical filename order after `gen/addr.js`. Unknown arguments are errors.
 
 - `../coderpack` owns the injected JavaScript under `agent/src`, plus
   `api.jar`, `zygote.jar`, and
-  `dev.ancaria.coderpack.zygote.Main`. A release build of this repository does
-  not require that checkout. A normal host run requires the agent and JAR
-  outputs.
+  `dev.ancaria.coderpack.zygote.Main`. A build of this repository does not
+  require that checkout, but it does require that repository's agent: without a
+  checkout it downloads the `agent.zip` of the release pinned in
+  `dependencies.json`. A normal host run additionally requires the JAR outputs.
 - `../mappings` owns every game address. This repository never reads mappings
   directly. Coderpack's `python tools/addr.py` generates
-  `agent/src/gen/addr.js`.
+  `agent/src/gen/addr.js`, which is embedded here as the first module.
 - `../launcher` runs `cargo build --release` when this checkout is present,
-  then stages `protocol.exe`, both JARs, the agent tree, and `VERSION`. Without
-  this checkout it downloads the pinned protocol release.
+  with `PROTOCOL_AGENT` pointing at its coderpack sibling, then stages
+  `protocol.exe`, both JARs, and `VERSION`. It no longer stages an agent
+  folder. Without this checkout it downloads the pinned protocol release, whose
+  agent is the one that repository's build embedded.
 
 The launcher starts the host with `--enable` and usually `--java`. It adds
 `--no-hook` for disabled sites, starts the host before the game, waits for the
@@ -289,6 +339,12 @@ Never add an address here or assume another executable uses the same RVAs.
   stack from the nested JSON.
 - The bundled agent is one JavaScript scope. Duplicate helper names overwrite
   one another silently. Filename order decides which definition wins.
+- An agent change now reaches players through a release of this repository. The
+  launcher no longer ships the scripts, so a coderpack release alone changes
+  nothing in a player's game: release coderpack, raise the pin in
+  `dependencies.json` if this repository builds from it, and release this one.
+  A workspace build takes the sibling and shows the change immediately, which
+  is exactly the case that can hide the missing release.
 - Upstream `frida` 0.17.2 casts callback `user_data` to the caller's handler
   type for non-`frida:rpc` messages even though it points to
   `CallbackHandler`. The first agent `send()` then faults the host with

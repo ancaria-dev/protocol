@@ -27,6 +27,12 @@ The executable waits for the game, injects the agent from the
 classpath, and passes messages in both directions. It writes nothing to the game's files. The hooks live in memory and
 disappear when the game process exits.
 
+The agent's JavaScript is inside this executable: the modules are minified and
+linked in at build time, and the script Frida injects is assembled in memory
+from them. No JavaScript is written to the game folder, to a temporary
+directory, or anywhere else. `--agent <path>` reads a folder instead, which is
+what somebody editing the agent wants.
+
 ## Running it
 
 The launcher normally starts the host. You can also run it directly from the
@@ -101,9 +107,14 @@ the host exits, so another host can try to patch an already hooked instruction.
 | `--no-hook goldEpilogue` | keep the module, skip that one attach site |
 | `--trace` | every hook announces itself as it runs |
 | `--no-ask` | hooks stay installed, verdicts are disabled |
+| `--agent <path>` | read the agent out of a folder instead of the built-in one |
+| `--hooks` | print the hook sites as JSON and stop |
 
 Module names are the agent's file names without the number prefix. `--agent`,
 `--dist`, `--mods`, and `--java` override the paths that the host discovers.
+`--hooks` is how the launcher draws its list of switchable sites: it asks the
+copy of the host in the game folder, because that is what knows which agent is
+in it.
 `--enable` selects the mod IDs to load. Without `--java`, the host first checks
 for `java/bin/java.exe` beside the executable, where the launcher installs a
 downloaded JDK. It then checks `%JAVA_HOME%\bin\java.exe` before using `java`
@@ -116,6 +127,14 @@ an error.
 ```
 cargo build --release
 ```
+
+The build needs the agent, and takes it from the first of these it finds:
+`$PROTOCOL_AGENT`, the sibling `../coderpack/agent/src`, or the `agent.zip`
+asset of the coderpack release pinned in `dependencies.json`, which it caches
+under `build/agent/`. The third is what makes a lone clone build: coderpack
+generates its address table rather than committing it, so a checkout is not
+always enough and a release asset always is. The host prints which one it was
+built from as it starts.
 
 The result is `target/release/protocol.exe`. You need Rust 1.98 with the MSVC
 toolchain and an LLVM install, because `frida-sys` runs bindgen and bindgen
@@ -136,9 +155,11 @@ message. It does not need the game:
 cargo run --example message_check
 ```
 
-`cargo test --release` currently runs six tests covering the frame codec, the
-agent bundler, and the JVM boundary. The two bundler tests use the repository's
-fixture agent in `tests/agent`, so they never read `../coderpack`. The
+`cargo test --release` currently runs nineteen tests covering the frame codec,
+the minifier, the agent bundler, and the JVM boundary. The folder-reading
+bundler tests use the repository's fixture agent in `tests/agent`, so they never
+read `../coderpack`; the rest check the agent that was linked in, whichever of
+the three sources it came from. The
 end-to-end test starts a real Coderpack JVM with no mods and checks that every
 `ASK` receives a frame the host can parse. It uses the lexically newest `api`
 and `zygote` JARs it can find in a coderpack checkout beside this repository or
