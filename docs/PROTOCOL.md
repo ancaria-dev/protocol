@@ -18,8 +18,8 @@ The host owns both ends. The agent never talks to the JVM directly.
 
 | Frame | Direction | Meaning |
 |---|---|---|
-| `EVT <seq> <type> <k>=<v> ...` | host → Coderpack | happened; no answer expected |
-| `ASK <seq> <type> <k>=<v> ...` | host → Coderpack | about to happen; answer required |
+| `EVT <seq> <type> <k>=<v> ...` | host → Coderpack | happened, no answer expected |
+| `ASK <seq> <type> <k>=<v> ...` | host → Coderpack | about to happen, answer required |
 | `END <seq> ok=1` | Coderpack → host | let it proceed unchanged |
 | `END <seq> cancel=1` | Coderpack → host | suppress the write |
 | `END <seq> set.<k>=<v> ...` | Coderpack → host | rewrite these fields, then proceed |
@@ -43,12 +43,12 @@ choice:
 
 | Event | Frame | Why |
 |---|---|---|
-| `health.damage` | `ASK` | `+0x16FC44` commits EAX; we own EAX |
+| `health.damage` | `ASK` | `+0x16FC44` commits EAX, which we own |
 | `exp.gain` | `ASK` | `+0x17EAE4` commits EAX, gain in ESI |
 | `gold.delta` | `ASK` | the AddGold entry owns the delta argument |
 | `item.pickup` | `ASK` | the pickup function reads the item from its `ref` argument |
 | `skill.change` | `ASK` | `+0x1827DA` commits the low byte of ECX |
-| `attr.spend` | `ASK` | no register to swap -- see below |
+| `attr.spend` | `ASK` | no register to swap, see below |
 | `health.death` | `EVT` | the source register is a zero constant the path reuses |
 | `entity.*` | `EVT` | observation only, no rewrite point identified |
 | `item.stored` / `item.equip` / `item.moved` | `EVT` | no clean no-op path: on equip, `ref` 0 means *unequip*, not *do nothing* |
@@ -57,26 +57,26 @@ choice:
 
 A verdict does not have to be a register swap. `attr.spend` is asked *after*
 the game's own grant returns, and the agent applies the answer by writing the
-field -- nothing else has observed it yet, so the result is the same. What makes
+field. Nothing else has observed it yet, so the result is the same. What makes
 an event askable is that Coderpack's answer can still decide the value, not the
 particular way it is applied.
 
 `item.pickup` is the clearest case of that. The game's pickup function resolves
 its `ref` argument through the object table and, when the lookup fails, jumps to
-its own epilogue having done nothing. So `cancel` writes 0 into that argument --
-the game's own "nothing there" path -- and `set.ref` writes a different one,
+its own epilogue having done nothing. So `cancel` writes 0 into that argument,
+the game's own "nothing there" path, and `set.ref` writes a different one,
 which makes the same code pick up a different object. Only the hero's pickups
-are asked about; a creature picking something up arrives as `EVT` with
+are asked about. A creature picking something up arrives as `EVT` with
 `player=0`, because the rate on those three call sites has never been measured
 and an `ASK` stops the game thread.
 
 The verdict carries a second, different power. `set.ref` chooses **which**
-object is picked up and lasts for that one call; `set.type` (and `set.level`,
+object is picked up and lasts for that one call. `set.type` (and `set.level`,
 `set.min`, `set.atk`, `set.pct`) rewrite the object **itself**, and outlive the
-event -- drop the item again and it is still what it was made into. They compose
+event: drop the item again and it is still what it was made into. They compose
 in that order: the ref picks the object, the rest reshape whatever was picked.
 
-`set.type` is the item's **label**, not its identity -- confirmed in game, it
+`set.type` is the item's **label**, not its identity. Confirmed in game, it
 renames and redraws and changes nothing else. What an item *does* is `set.mods`,
 the modifier list (`id:value` pairs), which is why a retyped rune keeps
 upgrading the art it always did. Writing modifiers is implemented and **not yet
@@ -109,7 +109,7 @@ so Coderpack looks a value up by name and finds nothing, with no error anywhere.
 is how `ui.string` returned null for its whole life.
 
 `type.find` and `type.list` are the reverse of `type.name`, which the game has
-no primitive for -- the agent builds the index by asking `typeName` for every id
+no primitive for, so the agent builds the index by asking `typeName` for every id
 once, on first use. A mod should always name a type rather than write its id:
 ids are build-specific numbers with no meaning, and
 `TYPE_OBJECT_POTION_LARGE_RED` survives a build that renumbers them.

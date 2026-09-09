@@ -1,6 +1,7 @@
 //! The mod JVM: a child process whose stdin carries frames and whose stdout
-//! carries verdicts and commands.  Nothing native is loaded into it -- the pipe
-//! is the whole boundary, which is why a crashing mod cannot crash the game.
+//! carries verdicts and commands.  Nothing native is loaded into it, and the
+//! pipe is the whole boundary, which is why a crashing mod cannot crash the
+//! game.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -20,7 +21,7 @@ pub struct Jvm {
 
 impl Jvm {
     /// Spawns Coderpack.  `on_frame` runs on the reader thread for every frame the
-    /// JVM sends back; it must not block for long.
+    /// JVM sends back, and it must not block for long.
     pub fn spawn<F>(
         java: &Path,
         classpath: &str,

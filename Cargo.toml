@@ -6,7 +6,7 @@ description = "Injects the Coderpack agent into Sacred Gold and runs the mod JVM
 
 [dependencies]
 anyhow = "1"
-# Patched copy -- see vendor/README.md. Upstream 0.17.2 faults on
+# Patched copy, see vendor/README.md. Upstream 0.17.2 faults on
 # the first non-RPC message from the agent.
 frida = { path = "vendor/frida", features = ["auto-download"] }
 serde_json = "1"

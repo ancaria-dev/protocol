@@ -3,8 +3,9 @@
 //! The one invariant that matters: **nothing here blocks**.  The agent stops
 //! the game thread while it waits for a verdict, so if this side blocked while
 //! waiting for Coderpack, a mod issuing a command from inside an event handler would
-//! deadlock the game.  So `on_message` only writes; verdicts are posted by the
-//! JVM reader thread, and a watchdog answers on Coderpack's behalf when it is late.
+//! deadlock the game.  So `on_message` only writes.  Verdicts are posted by
+//! the JVM reader thread, and a watchdog answers on Coderpack's behalf when it
+//! is late.
 
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
@@ -66,7 +67,7 @@ impl ScriptHandler for Router {
             }
             // Everything frida-rust could not type.  An exception thrown
             // inside a hook callback lands here rather than in Error, because
-            // it carries no fileName and the typed variant requires one -- so
+            // it carries no fileName and the typed variant requires one, so
             // the one message that matters most used to print as a wall of
             // escaped JSON with the real reason buried in it.
             Message::Other(value) => eprintln!("[agent] {}", other(&value)),

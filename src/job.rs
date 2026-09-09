@@ -1,7 +1,7 @@
 //! A Windows job object that kills the JVM when the host exits.
 //!
 //! Rule: the game dying must not leave a zombie JVM behind.  The host owns the
-//! job; when the host's handle closes -- cleanly or by being killed -- Windows
+//! job.  When the host's handle closes, cleanly or by being killed, Windows
 //! terminates everything assigned to it.
 
 #[cfg(windows)]
@@ -19,7 +19,7 @@ mod imp {
     pub struct Job(HANDLE);
 
     // The handle is only ever used to assign children and is closed by the OS
-    // when the process exits; moving it between threads is safe.
+    // when the process exits, and moving it between threads is safe.
     unsafe impl Send for Job {}
 
     impl Job {

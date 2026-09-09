@@ -10,8 +10,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 /// Modules are named by their file name without the number prefix ("gold",
-/// "position").  `skip` leaves those out; `only` loads nothing but those.
-/// `core` and `bus` are always loaded -- everything else depends on them.
+/// "position").  `skip` leaves those out, `only` loads nothing but those.
+/// `core` and `bus` always load, since everything else depends on them.
 /// Bisecting a crash otherwise means an edit and a rebuild per attempt, and
 /// every attempt costs a game restart.
 pub fn bundle(dir: &Path, skip: &[String], only: &[String],
@@ -60,7 +60,7 @@ var NO_HOOK = [{}];
     }
     if !ask {
         // Separates "the hook is installed" from "the hook stops the game
-        // thread waiting for a verdict" -- one game restart answers which.
+        // thread waiting for a verdict".  One game restart answers which.
         out.push_str("
 // --no-ask
 askEnabled = false;

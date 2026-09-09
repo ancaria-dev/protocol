@@ -130,7 +130,7 @@ fn default_agent() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("agent"))
 }
 
-/// Where the jars live.  "." always exists, so it cannot be a default -- the
+/// Where the jars live.  "." always exists, so it cannot be a default.  The
 /// directory is identified by the loader jar being in it.
 fn default_dist() -> PathBuf {
     let exe_dir = std::env::current_exe()
@@ -329,7 +329,7 @@ fn post(script: &Script, item: ToAgent) {
 }
 
 /// Answers on Coderpack's behalf when a mod is too slow.  A hung mod must never hang
-/// the game -- it loses its veto instead.
+/// the game, so it loses its veto instead.
 fn spawn_watchdog(pending: Pending, work: std::sync::mpsc::Sender<ToAgent>) {
     thread::spawn(move || loop {
         thread::sleep(VERDICT_DEADLINE / 2);

@@ -148,9 +148,9 @@ fn decode(value: &str) -> String {
 
 /// Runs the real Coderpack against the real codec, with no game involved.
 ///
-/// `tests/replay.py` checks what Coderpack emits; this checks what the host makes of
+/// `tests/replay.py` checks what Coderpack emits. This checks what the host makes of
 /// it. That gap is not academic: verdicts were parsed with their fields eaten
-/// for several builds while the Python test passed every time -- which is what
+/// for several builds while the Python test passed every time, which is what
 /// `verdicts_keep_their_fields` above pins down on literal lines. What only a
 /// live Coderpack can show is that every ASK is answered at all, by whatever mods
 /// happen to be installed: an unanswered one stops the game thread until the
@@ -164,8 +164,8 @@ mod endtoend {
 
     /// The zygote and its API, from wherever this machine happens to have
     /// them: a coderpack checkout beside this one, or the local Maven
-    /// repository that `publishToMavenLocal` writes into. Neither is required
-    /// -- a lone clone of this repository skips this test rather than failing,
+    /// repository that `publishToMavenLocal` writes into. Neither is required:
+    /// a lone clone of this repository skips this test rather than failing,
     /// because what it covers is the boundary, and the other side of that
     /// boundary is another repository's build.
     fn jars() -> Option<(PathBuf, PathBuf)> {
@@ -208,8 +208,8 @@ mod endtoend {
             return;
         };
         let classpath = format!("{};{}", api.display(), zygote.display());
-        // No mods on purpose.  What is under test is the boundary -- every ASK
-        // comes back as a frame the host can read -- and a mod that asks the
+        // No mods on purpose.  What is under test is the boundary, that every
+        // ASK comes back as a frame the host can read, and a mod that asks the
         // game a question would have this test waiting on a host that is not
         // running.  Mod behaviour is tests/replay.py's job.
         let mut zygote = Command::new("java")
