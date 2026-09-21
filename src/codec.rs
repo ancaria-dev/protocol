@@ -178,7 +178,11 @@ mod endtoend {
                     name.starts_with(part) && name.ends_with(".jar")
                         && !name.contains("-sources") && !name.contains("-javadoc")
                 })
-                .max()
+                // By when it was built, not by what it is called.  As text
+                // "zygote-0.99.0" sorts above "zygote-0.100.0", so a folder
+                // holding both handed this test the older one, and a change
+                // to the boundary looked like a change that broke it.
+                .max_by_key(|path| path.metadata().and_then(|m| m.modified()).ok())
         };
         let sibling = |part: &str| {
             newest(PathBuf::from("../coderpack").join(part).join("build/libs"), part)
@@ -189,7 +193,7 @@ mod endtoend {
                 .map(|e| e.path())
                 .filter(|p| p.is_dir())
                 .filter_map(|version| newest(version, part))
-                .max()
+                .max_by_key(|path| path.metadata().and_then(|m| m.modified()).ok())
         };
         let find = |part: &str| sibling(part).or_else(|| m2(part));
         Some((find("api")?, find("zygote")?))
