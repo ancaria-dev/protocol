@@ -17,9 +17,11 @@ between them and the Windows host that carries it.
 
 Mods run in a separate `java.exe`, while Frida injects the JavaScript agent
 into the game. Agent and host exchange Frida messages. Host and JVM exchange
-newline-terminated UTF-8 frames through the JVM's standard I/O pipes. The host
-writes to JVM stdin and reads from JVM stdout. The agent never talks to the JVM
-directly. [docs/PROTOCOL.md](docs/PROTOCOL.md) defines the frame format.
+newline-terminated UTF-8 frames over two named pipes the host creates before
+it starts the JVM: `<base>.in` toward the JVM and `<base>.out` back. The JVM's
+own standard I/O carries no frames and belongs to the mods. The agent never
+talks to the JVM directly. [docs/PROTOCOL.md](docs/PROTOCOL.md) defines the
+frame format.
 
 The executable waits for the game, injects the agent from the
 [coderpack](https://github.com/ancaria-dev/coderpack) repository, starts
@@ -83,9 +85,10 @@ Because `ASK` blocks the game thread, three rules apply:
 - **Whatever answers an `ASK` must not read replies on the same thread.** A mod
   calling back into the game from inside an event handler deadlocks it. Both
   sides split reading from dispatch for that reason.
-- **stdout carries frames and nothing else.** Logs go to stderr. A mod that
-  prints with `System.out` corrupts the stream, and the host reports that line
-  as unparseable Coderpack output. The loader provides its own logging API.
+- **Frames have a channel of their own, not stdout.** A mod that prints with
+  `System.out` therefore breaks nothing, and its output reaches the host's
+  console. A line the host cannot read is reported as unparseable Coderpack
+  output. The loader provides its own logging API, which prefixes the mod id.
 
 On Windows, the host tries to place the JVM in a job object configured with
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. The game process never joins that job.

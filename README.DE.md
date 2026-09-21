@@ -19,9 +19,11 @@ Windows-Host, der die Nachrichten überträgt.
 Die Mods laufen in einer eigenen `java.exe`. Im Spiel arbeitet ein von Frida
 eingeschleuster JavaScript-Agent. Er sendet Frida-Nachrichten an den Host, der
 sie in Protokoll-Frames umwandelt. Zwischen Host und JVM laufen diese Frames
-zeilenweise über `stdout` und `stdin`. Das genaue Format beschreibt
-[docs/PROTOCOL.md](docs/PROTOCOL.md). Der Host schreibt in stdin der JVM und
-liest deren stdout. Der Agent spricht nie direkt mit der JVM.
+zeilenweise über zwei benannte Pipes, die der Host vor dem Start der JVM
+anlegt: `<base>.in` zur JVM und `<base>.out` zurück. Die Standardkanäle der JVM
+tragen keine Frames und gehören den Mods. Das genaue Format beschreibt
+[docs/PROTOCOL.md](docs/PROTOCOL.md). Der Agent spricht nie direkt mit der
+JVM.
 
 Die Programmdatei wartet auf den Spielprozess, lädt den Agenten aus dem
 Repository [coderpack](https://github.com/ancaria-dev/coderpack), startet
@@ -91,10 +93,11 @@ Weil `ASK` den Spiel-Thread blockiert, gelten drei Regeln:
 - **Wer ein `ASK` beantwortet, darf im selben Thread keine Antworten lesen.** Ein
   Mod, der aus einem Event-Handler heraus wieder das Spiel aufruft, verursacht
   sonst einen Deadlock. Empfang und Versand laufen deshalb getrennt.
-- **Über `stdout` dürfen nur Frames laufen.** Diagnoseausgaben gehören nach
-  `stderr`. Schreibt ein Mod mit `System.out`, kann der Host die betreffende
-  Zeile nicht als Frame lesen und meldet sie als nicht interpretierbare
-  Coderpack-Ausgabe. Für Logs stellt der Loader eine eigene Schnittstelle bereit.
+- **Frames haben einen eigenen Kanal, nicht `stdout`.** Schreibt ein Mod mit
+  `System.out`, geht deshalb nichts kaputt, und seine Ausgabe landet auf der
+  Konsole des Hosts. Eine Zeile, die der Host nicht lesen kann, meldet er als
+  nicht interpretierbare Coderpack-Ausgabe. Für Logs stellt der Loader eine
+  eigene Schnittstelle bereit, die die Mod-Id voranstellt.
 
 Unter Windows versucht der Host, ausschließlich die JVM in ein Windows-Jobobjekt
 mit `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` aufzunehmen. Gelingt die Zuordnung,
