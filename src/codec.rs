@@ -199,55 +199,20 @@ mod endtoend {
         Some((find("api")?, find("zygote")?))
     }
 
-    fn home() -> Option<PathBuf> {
-        std::env::var_os("USERPROFILE")
-            .or_else(|| std::env::var_os("HOME"))
-            .map(PathBuf::from)
-    }
+    /// No mods on purpose.  What is under test is the boundary, that every ASK
+    /// comes back as a frame the host can read, and a mod that asks the game a
+    /// question would have this waiting on a host that is not running.  Mod
+    /// behaviour is tests/replay.py's job.
+    const SCRIPT: [&str; 6] = [
+        "EVT 0 hero.captured cls=1 clsName=Seraphim level=10 hp=100 maxHp=100 gold=0 exp=0",
+        "ASK 1 health.damage kind=damage damage=30 prev=100 next=70 max=100",
+        "ASK 2 gold.delta delta=100 current=0 dir=gain",
+        "ASK 3 item.pickup ref=8814 name=TYPE_OBJECT_RING_FIRE01 level=30 player=1",
+        "EVT 0 weather.rain_start intensity=3",
+        "BYE",
+    ];
 
-    #[test]
-    fn zygote_answers_every_ask() {
-        let Some((api, zygote)) = jars() else {
-            eprintln!("Skipped: No Coderpack JARs found in ../coderpack or ~/.m2");
-            return;
-        };
-        let classpath = format!("{};{}", api.display(), zygote.display());
-        // No mods on purpose.  What is under test is the boundary, that every
-        // ASK comes back as a frame the host can read, and a mod that asks the
-        // game a question would have this test waiting on a host that is not
-        // running.  Mod behaviour is tests/replay.py's job.
-        let mut zygote = Command::new("java")
-            .args(["-cp", &classpath, "dev.ancaria.coderpack.zygote.Main",
-                   "--mods"])
-            .arg("no-mods-here")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("java");
-
-        let mut stdin = zygote.stdin.take().expect("piped");
-        for line in [
-            "EVT 0 hero.captured cls=1 clsName=Seraphim level=10 hp=100 maxHp=100 gold=0 exp=0",
-            "ASK 1 health.damage kind=damage damage=30 prev=100 next=70 max=100",
-            "ASK 2 gold.delta delta=100 current=0 dir=gain",
-            "ASK 3 item.pickup ref=8814 name=TYPE_OBJECT_RING_FIRE01 level=30 player=1",
-            "EVT 0 weather.rain_start intensity=3",
-            "BYE",
-        ] {
-            writeln!(stdin, "{line}").expect("write");
-        }
-        drop(stdin);
-
-        let mut replies = Vec::new();
-        for line in BufReader::new(zygote.stdout.take().expect("piped"))
-            .lines()
-            .map_while(Result::ok)
-        {
-            replies.push(Frame::decode(&line).expect("host must parse Coderpack"));
-        }
-        let _ = zygote.wait();
-
+    fn answered(replies: &[Frame]) {
         for seq in [1, 2, 3] {
             let verdict = replies
                 .iter()
@@ -261,5 +226,90 @@ mod endtoend {
                         || !verdict.rewrites().is_empty(),
                     "ask {seq} came back with no decision in it");
         }
+    }
+
+    fn home() -> Option<PathBuf> {
+        std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(PathBuf::from)
+    }
+
+    #[test]
+    fn zygote_answers_every_ask() {
+        let Some((api, zygote)) = jars() else {
+            eprintln!("Skipped: No Coderpack JARs found in ../coderpack or ~/.m2");
+            return;
+        };
+        let classpath = format!("{};{}", api.display(), zygote.display());
+        let mut zygote = Command::new("java")
+            .args(["-cp", &classpath, "dev.ancaria.coderpack.zygote.Main",
+                   "--mods"])
+            .arg("no-mods-here")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("java");
+
+        let mut stdin = zygote.stdin.take().expect("piped");
+        for line in SCRIPT {
+            writeln!(stdin, "{line}").expect("write");
+        }
+        drop(stdin);
+
+        let mut replies = Vec::new();
+        for line in BufReader::new(zygote.stdout.take().expect("piped"))
+            .lines()
+            .map_while(Result::ok)
+        {
+            replies.push(Frame::decode(&line).expect("host must parse Coderpack"));
+        }
+        let _ = zygote.wait();
+
+        answered(&replies);
+    }
+
+    /// The same script over the transport a player actually gets.
+    ///
+    /// Through `Jvm::spawn` rather than a hand-rolled `Command`, because the
+    /// pipe is the part under test and the host is the only thing that knows
+    /// how to make one: it has to be created before the JVM starts, named on
+    /// its command line, and connected afterwards.  A regression here is a
+    /// game that loads its mods and then hears nothing from them.
+    #[test]
+    fn zygote_answers_every_ask_over_a_pipe() {
+        let Some((api, zygote)) = jars() else {
+            eprintln!("Skipped: No Coderpack JARs found in ../coderpack or ~/.m2");
+            return;
+        };
+        let classpath = format!("{};{}", api.display(), zygote.display());
+
+        let (found, replies) = std::sync::mpsc::channel();
+        let jvm = crate::jvm::Jvm::spawn(
+            std::path::Path::new("java"),
+            &classpath,
+            std::path::Path::new("no-mods-here"),
+            None,
+            None,
+            move |frame| {
+                let _ = found.send(frame);
+            },
+        )
+        .expect("the host must be able to reach Coderpack on a pipe");
+
+        let send = jvm.sender();
+        for line in SCRIPT {
+            send.send(line.to_string()).expect("write");
+        }
+
+        // Ends on its own: BYE stops the JVM, that closes the pipe, and the
+        // host's reader thread drops the sender on its way out.
+        let mut collected = Vec::new();
+        while let Ok(frame) =
+            replies.recv_timeout(std::time::Duration::from_secs(30))
+        {
+            collected.push(frame);
+        }
+        answered(&collected);
     }
 }

@@ -13,6 +13,7 @@ mod job;
 #[allow(dead_code)]
 mod js;
 mod jvm;
+mod pipe;
 mod router;
 
 use std::path::{Path, PathBuf};
