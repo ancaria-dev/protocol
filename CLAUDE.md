@@ -18,9 +18,20 @@ There are two different transports:
 1. The injected agent uses Frida messages. Agent-to-host traffic comes through
    `send()`. Host-to-agent traffic uses `Script::post()` with JSON messages.
 2. The host and JVM exchange newline-terminated UTF-8 protocol frames through
-   the JVM child's anonymous standard I/O pipes. The host writes frames to the
-   JVM's stdin and reads frames from its stdout. The agent never talks directly
-   to the JVM.
+   two Windows named pipes the host creates before it starts the JVM, under a
+   random `\\.\pipe\ancaria-<128 bits>` base passed as `--pipe`. `<base>.in`
+   carries frames to the JVM and `<base>.out` carries them back. The JVM's own
+   standard I/O carries no frames. The agent never talks directly to the JVM.
+
+   One pipe per direction, not one duplex pipe. A handle created without
+   `FILE_FLAG_OVERLAPPED` is a synchronous file object, and Windows serialises
+   operations on a file object, so a reader thread parked in `ReadFile` blocks
+   every write behind it. Duplicating the handle does not help: a duplicate
+   shares the file object. The symptom is one frame through and then silence.
+
+   Without `--pipe` the JVM falls back to stdin and stdout, which is how this
+   worked before 0.100.x and how the test harnesses still drive it. Keep that
+   path: it is what makes Coderpack drivable by hand.
 
 The build produces `target/release/protocol.exe`, which `launcher` packages and
 starts. Read `docs/PROTOCOL.md` before changing `src/codec.rs` or
@@ -35,9 +46,10 @@ still describes planned behavior.
 | `src/main.rs` | Argument parsing, path discovery, game attach loop, the sole Frida poster loop named `pump`, and the verdict watchdog |
 | `src/agent.rs` | Builds the single JavaScript source string injected by Frida |
 | `src/js.rs` | The minifier and the hook-site reader, shared with `build.rs` |
-| `src/codec.rs` | Frame encoding, decoding, percent-encoding, codec tests, and the JVM end-to-end test |
+| `src/codec.rs` | Frame encoding, decoding, percent-encoding, codec tests, and both JVM end-to-end tests |
 | `src/router.rs` | Converts Frida agent messages to frames, tracks pending asks, and converts JVM frames to work for `pump` |
-| `src/jvm.rs` | Starts the Java child and owns separate stdout-reader and stdin-writer threads |
+| `src/jvm.rs` | Starts the Java child, picks its transport, and owns separate reader and writer threads |
+| `src/pipe.rs` | The two named pipes the host talks to Coderpack over, and a non-Windows stub |
 | `src/job.rs` | Windows job-object support and a non-Windows stub |
 | `examples/message_check.rs` | Regression check for the vendored Frida callback fix |
 | `vendor/frida` | Patched copy of `frida` 0.17.2, documented in `vendor/README.md` |
@@ -124,11 +136,14 @@ an object or array, it logs a warning and serializes that value into one field.
 Coderpack cannot look through that JSON blob, so nested output is a protocol
 bug.
 
-The JVM's stdout carries frames only. `System.out` from a mod corrupts the
-wire. `jvm.rs` reports such a line as
-`[coderpack] Could not parse Coderpack output: <line>`. JVM stderr is inherited
-and is the correct path for Java diagnostics. Mods should use the loader's own
-logging API.
+The pipes carry frames only, and nothing in the JVM but `Pipe` can reach them,
+which is the point of having them. On the stdio fallback that guarantee is gone
+and `System.out` from a mod corrupts the wire, which is why coderpack's
+`Main.claimStdout` points `System.out` at stderr before the first mod loads.
+Either way `jvm.rs` reports a line it cannot read as
+`[coderpack] Could not parse Coderpack output: <line>`. JVM stdout and stderr
+are inherited and are the correct path for Java diagnostics. Mods should use
+the loader's own logging API, which prefixes the mod id.
 
 `BYE` is specified as host-to-Coderpack shutdown. The current router also
 accepts `BYE` from Coderpack and posts `{"type":"mode","ask":false}` to the
@@ -146,10 +161,10 @@ Keep the existing ownership split:
 
 - Frida's callback converts agent messages and sends encoded frames to the JVM
   writer channel.
-- The JVM stdout reader decodes `END`, `CMD`, `LOG`, and `BYE`, then enqueues
+- The JVM reader thread decodes `END`, `CMD`, `LOG`, and `BYE`, then enqueues
   work for `pump`.
 - Only `pump` owns the Frida `Script` and calls `Script::post()`.
-- Coderpack's stdin reader stays separate from its mod-dispatch thread so
+- Coderpack's frame reader stays separate from its mod-dispatch thread so
   command replies can complete while a mod handler waits.
 
 `VERDICT_DEADLINE` is 250 ms. The watchdog scans every 125 ms and considers an
@@ -212,7 +227,7 @@ cargo run --example message_check
 ```
 
 `cargo build --release` writes `target/release/protocol.exe`.
-`cargo test --release` currently runs nineteen tests. The folder-reading bundler
+`cargo test --release` currently runs twenty tests. The folder-reading bundler
 tests use this repository's `tests/agent` fixture, including its generated
 address table, and never read `../coderpack`. The rest check the agent that was
 linked in, whichever of the three sources it came from: that it loads in the
@@ -220,10 +235,15 @@ right order, that it kept `core`, `bus` and `names`, that it arrived minified,
 and that the hook manifest names modules and sites.
 
 `codec::endtoend::zygote_answers_every_ask` starts a real Coderpack JVM with no
-mods. It selects the lexically newest `api` and `zygote` JARs it can find under
+mods over the stdio fallback, and
+`codec::endtoend::zygote_answers_every_ask_over_a_pipe` does the same through
+`Jvm::spawn`, which is the only test that opens a pipe. Both select the most
+recently built `api` and `zygote` JARs they can find under
 `../coderpack/<part>/build/libs` or
-`~/.m2/repository/dev/ancaria/coderpack/`. If either JAR is missing, it prints
-`Skipped: No Coderpack JARs found in ../coderpack or ~/.m2` and passes. A
+`~/.m2/repository/dev/ancaria/coderpack/`. By build time and not by name:
+`zygote-0.99.0` sorts above `zygote-0.100.0` as text, so a folder holding both
+used to hand these tests the older one. If either JAR is missing, they print
+`Skipped: No Coderpack JARs found in ../coderpack or ~/.m2` and pass. A
 Rust-only checkout therefore needs no JDK. A real host run requires JDK 21 or
 newer.
 

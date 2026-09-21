@@ -8,11 +8,21 @@ most of what this layer does early on.
 agent (Frida, inside the game)
         │  frida message
         ▼
-protocol.exe (Rust)  ──stdout──►  java.exe: zygote + mods
-                     ◄──stdin───
+protocol.exe (Rust)  ──<base>.in ──►  java.exe: zygote + mods
+                     ◄─ <base>.out ──
 ```
 
 The host owns both ends. The agent never talks to the JVM directly.
+
+Those two are Windows named pipes the host creates before it starts the JVM,
+under a random `\\.\pipe\ancaria-<128 bits>` base it passes as `--pipe`. One
+per direction, because a synchronous handle serialises its operations and a
+parked read would hold up every write. The JVM's own stdin, stdout and stderr
+carry no frames and belong to the mods.
+
+Frames travelled on the JVM's standard I/O until 0.100.x, and still do when no
+`--pipe` is given, which is what the test harnesses use. That arrangement puts
+the wire somewhere a mod can print into: see `Main.claimStdout` in coderpack.
 
 ## Frames
 
