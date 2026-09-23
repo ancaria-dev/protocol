@@ -1,6 +1,6 @@
 [package]
 name = "protocol"
-version = "0.101.0"
+version = "0.200.0"
 edition = "2024"
 description = "Injects the Coderpack agent into Sacred Gold and runs the mod JVM"
 
