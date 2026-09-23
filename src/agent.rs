@@ -35,17 +35,28 @@ type Module = (String, String);
 /// `core` and `bus` always load, since everything else depends on them.
 /// Bisecting a crash otherwise means an edit and a rebuild per attempt, and
 /// every attempt costs a game restart.
-pub fn bundle(dir: Option<&Path>, skip: &[String], only: &[String],
-              ask: bool, no_hook: &[String], trace: bool) -> Result<String> {
+pub fn bundle(
+    dir: Option<&Path>,
+    skip: &[String],
+    only: &[String],
+    ask: bool,
+    no_hook: &[String],
+    trace: bool,
+) -> Result<String> {
     let (mut out, sources) = read(dir)?;
 
     // Individual sites the agent must not attach to, read by core's hook().
     let names: Vec<String> = no_hook.iter().map(|n| format!("\"{n}\"")).collect();
-    out.push_str(&format!("
+    out.push_str(&format!(
+        "
 var NO_HOOK = [{}];
-", names.join(", ")));
-    out.push_str(&format!("var HOOK_TRACE = {trace};
-"));
+",
+        names.join(", ")
+    ));
+    out.push_str(&format!(
+        "var HOOK_TRACE = {trace};
+"
+    ));
 
     for (name, source) in sources {
         let module = module(&name);
@@ -67,10 +78,12 @@ var NO_HOOK = [{}];
     if !ask {
         // Separates "the hook is installed" from "the hook stops the game
         // thread waiting for a verdict".  One game restart answers which.
-        out.push_str("
+        out.push_str(
+            "
 // --no-ask
 askEnabled = false;
-");
+",
+        );
     }
     Ok(out)
 }
@@ -127,7 +140,11 @@ fn read(dir: Option<&Path>) -> Result<(String, Vec<Module>)> {
 
     let mut modules = Vec::with_capacity(paths.len());
     for path in paths {
-        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         modules.push((name, std::fs::read_to_string(&path)?));
     }
     Ok((addr, modules))
@@ -155,20 +172,36 @@ mod tests {
 
     #[test]
     fn disabled_sites_reach_the_agent() {
-        let bundle = super::bundle(Some(&agent_dir()), &[], &[], true,
-                                   &["goldEpilogue".to_string()], false)
-            .expect("bundles");
-        assert!(bundle.contains("var NO_HOOK = [\"goldEpilogue\"];"),
-                "the agent must be told which sites to leave alone");
-        assert!(bundle.find("var NO_HOOK").unwrap()
-                    < bundle.find("function hook(").unwrap(),
-                "NO_HOOK has to be declared before core reads it");
+        let bundle = super::bundle(
+            Some(&agent_dir()),
+            &[],
+            &[],
+            true,
+            &["goldEpilogue".to_string()],
+            false,
+        )
+        .expect("bundles");
+        assert!(
+            bundle.contains("var NO_HOOK = [\"goldEpilogue\"];"),
+            "the agent must be told which sites to leave alone"
+        );
+        assert!(
+            bundle.find("var NO_HOOK").unwrap() < bundle.find("function hook(").unwrap(),
+            "NO_HOOK has to be declared before core reads it"
+        );
     }
 
     #[test]
     fn only_keeps_the_runtime_modules() {
-        let bundle = super::bundle(Some(&agent_dir()), &[], &["gold".to_string()],
-                                   true, &[], false).expect("bundles");
+        let bundle = super::bundle(
+            Some(&agent_dir()),
+            &[],
+            &["gold".to_string()],
+            true,
+            &[],
+            false,
+        )
+        .expect("bundles");
         assert!(bundle.contains("60-gold.js"));
         assert!(bundle.contains("10-core.js"), "core is not optional");
         assert!(!bundle.contains("50-health.js"));
@@ -183,9 +216,10 @@ mod tests {
         let bundle = super::bundle(None, &[], &[], true, &[], false).expect("bundles");
         assert!(bundle.contains("var RVA"), "the address table comes first");
         assert!(bundle.find("var RVA").unwrap() < bundle.find("var NO_HOOK").unwrap());
-        assert!(bundle.find("var NO_HOOK").unwrap()
-                    < bundle.find("// ---- 10-core.js ----").unwrap(),
-                "core reads NO_HOOK, so it is declared before core");
+        assert!(
+            bundle.find("var NO_HOOK").unwrap() < bundle.find("// ---- 10-core.js ----").unwrap(),
+            "core reads NO_HOOK, so it is declared before core"
+        );
     }
 
     /// Minification is comments and layout, and nothing else. Whole lines of
@@ -196,7 +230,10 @@ mod tests {
             .iter()
             .flat_map(|(_, source)| source.lines())
             .any(|line| line.starts_with("//") || line.starts_with(" "));
-        assert!(!commented, "the embedded modules keep comments or indentation");
+        assert!(
+            !commented,
+            "the embedded modules keep comments or indentation"
+        );
     }
 
     /// Every module the real agent has is still a module, and the ones the
@@ -208,7 +245,10 @@ mod tests {
             .map(|(name, _)| super::module(name))
             .collect();
         for required in ["core", "bus", "names"] {
-            assert!(names.contains(&required), "{required} is missing from the bundle");
+            assert!(
+                names.contains(&required),
+                "{required} is missing from the bundle"
+            );
         }
     }
 
@@ -218,11 +258,19 @@ mod tests {
         let manifest = super::manifest(None).expect("manifest");
         let groups: serde_json::Value = serde_json::from_str(&manifest).expect("json");
         let groups = groups.as_array().expect("an array of groups");
-        assert!(!groups.is_empty(), "no hook sites were read out of the agent");
+        assert!(
+            !groups.is_empty(),
+            "no hook sites were read out of the agent"
+        );
         assert!(groups.iter().any(|group| group["module"] == "core"));
-        assert!(groups.iter().all(|group| {
-            group["hooks"].as_array().is_some_and(|hooks| !hooks.is_empty())
-        }), "a module with no sites has no row");
+        assert!(
+            groups.iter().all(|group| {
+                group["hooks"]
+                    .as_array()
+                    .is_some_and(|hooks| !hooks.is_empty())
+            }),
+            "a module with no sites has no row"
+        );
     }
 
     /// The same list, read out of a folder: what `--agent` gets.

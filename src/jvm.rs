@@ -11,7 +11,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{Sender, channel};
 use std::thread;
 
 use anyhow::{Context, Result};
@@ -77,11 +77,14 @@ impl Jvm {
             // The one failure a player actually hits: no JDK on the machine at
             // all.  Naming the path and the way out beats "cannot start java",
             // which reads as a bug in the host.
-            .with_context(|| format!(
-                "Could not start the JVM at {}—the mod loader requires JDK 21 or newer. \
+            .with_context(|| {
+                format!(
+                    "Could not start the JVM at {}—the mod loader requires JDK 21 or newer. \
                  The launcher can download one to <Sacred Gold>/launcher/java. \
                  To use a different installation, pass --java <path to java.exe>",
-                java.display()))?;
+                    java.display()
+                )
+            })?;
 
         if let Some(job) = job {
             job.adopt(&child);

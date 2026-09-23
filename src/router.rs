@@ -19,8 +19,16 @@ use crate::codec::Frame;
 
 /// What the poster thread (which owns the Script) is asked to do.
 pub enum ToAgent {
-    Verdict { seq: u64, cancel: bool, set: Vec<(String, String)> },
-    Command { seq: u64, name: String, fields: Vec<(String, String)> },
+    Verdict {
+        seq: u64,
+        cancel: bool,
+        set: Vec<(String, String)>,
+    },
+    Command {
+        seq: u64,
+        name: String,
+        fields: Vec<(String, String)>,
+    },
     Asking(bool),
 }
 
@@ -62,8 +70,10 @@ impl ScriptHandler for Router {
             Message::Send(send) => self.dispatch(send.payload),
             Message::Log(log) => eprintln!("[agent] {}", log.payload),
             Message::Error(err) => {
-                eprintln!("[agent] Error: {} at {}:{}", err.description,
-                          err.file_name, err.line_number);
+                eprintln!(
+                    "[agent] Error: {} at {}:{}",
+                    err.description, err.file_name, err.line_number
+                );
             }
             // Everything frida-rust could not type.  An exception thrown
             // inside a hook callback lands here rather than in Error, because
@@ -96,9 +106,14 @@ fn other(value: &Value) -> String {
                 .map(str::trim)
                 .filter(|line| !line.is_empty())
                 .collect();
-            format!("{description}
-    {}", frames.join("
-    "))
+            format!(
+                "{description}
+    {}",
+                frames.join(
+                    "
+    "
+                )
+            )
         }
         None => description.to_string(),
     }

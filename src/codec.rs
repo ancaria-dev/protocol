@@ -73,7 +73,12 @@ impl Frame {
                 _ => {}
             }
         }
-        Some(Frame { verb, seq, name, fields })
+        Some(Frame {
+            verb,
+            seq,
+            name,
+            fields,
+        })
     }
 }
 
@@ -101,7 +106,9 @@ mod tests {
     #[test]
     fn round_trips_through_encode() {
         let mut frame = Frame::new("EVT", 9, "item.pickup");
-        frame.fields.push(("name".into(), "Lesser Healing Potion".into()));
+        frame
+            .fields
+            .push(("name".into(), "Lesser Healing Potion".into()));
         let back = Frame::decode(&frame.encode()).expect("parses");
         assert_eq!(back.name, "item.pickup");
         assert_eq!(back.field("name"), Some("Lesser Healing Potion"));
@@ -170,13 +177,20 @@ mod endtoend {
     /// boundary is another repository's build.
     fn jars() -> Option<(PathBuf, PathBuf)> {
         let newest = |dir: PathBuf, part: &str| -> Option<PathBuf> {
-            std::fs::read_dir(dir).ok()?.flatten()
+            std::fs::read_dir(dir)
+                .ok()?
+                .flatten()
                 .map(|e| e.path())
                 .filter(|p| {
-                    let name = p.file_name().unwrap_or_default()
-                                .to_string_lossy().to_string();
-                    name.starts_with(part) && name.ends_with(".jar")
-                        && !name.contains("-sources") && !name.contains("-javadoc")
+                    let name = p
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    name.starts_with(part)
+                        && name.ends_with(".jar")
+                        && !name.contains("-sources")
+                        && !name.contains("-javadoc")
                 })
                 // By when it was built, not by what it is called.  As text
                 // "zygote-0.99.0" sorts above "zygote-0.100.0", so a folder
@@ -185,11 +199,18 @@ mod endtoend {
                 .max_by_key(|path| path.metadata().and_then(|m| m.modified()).ok())
         };
         let sibling = |part: &str| {
-            newest(PathBuf::from("../coderpack").join(part).join("build/libs"), part)
+            newest(
+                PathBuf::from("../coderpack").join(part).join("build/libs"),
+                part,
+            )
         };
         let m2 = |part: &str| {
-            let base = home()?.join(".m2/repository/dev/ancaria/coderpack").join(part);
-            std::fs::read_dir(base).ok()?.flatten()
+            let base = home()?
+                .join(".m2/repository/dev/ancaria/coderpack")
+                .join(part);
+            std::fs::read_dir(base)
+                .ok()?
+                .flatten()
                 .map(|e| e.path())
                 .filter(|p| p.is_dir())
                 .filter_map(|version| newest(version, part))
@@ -221,10 +242,12 @@ mod endtoend {
             // No name, and the decision in the fields.  A verdict that parsed
             // as a *named* frame is how the fields used to get eaten.
             assert!(verdict.name.is_empty(), "END frames carry no name");
-            assert!(verdict.field("ok").is_some()
-                        || verdict.field("cancel").is_some()
-                        || !verdict.rewrites().is_empty(),
-                    "ask {seq} came back with no decision in it");
+            assert!(
+                verdict.field("ok").is_some()
+                    || verdict.field("cancel").is_some()
+                    || !verdict.rewrites().is_empty(),
+                "ask {seq} came back with no decision in it"
+            );
         }
     }
 
@@ -242,8 +265,12 @@ mod endtoend {
         };
         let classpath = format!("{};{}", api.display(), zygote.display());
         let mut zygote = Command::new("java")
-            .args(["-cp", &classpath, "dev.ancaria.coderpack.zygote.Main",
-                   "--mods"])
+            .args([
+                "-cp",
+                &classpath,
+                "dev.ancaria.coderpack.zygote.Main",
+                "--mods",
+            ])
             .arg("no-mods-here")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -305,9 +332,7 @@ mod endtoend {
         // Ends on its own: BYE stops the JVM, that closes the pipe, and the
         // host's reader thread drops the sender on its way out.
         let mut collected = Vec::new();
-        while let Ok(frame) =
-            replies.recv_timeout(std::time::Duration::from_secs(30))
-        {
+        while let Ok(frame) = replies.recv_timeout(std::time::Duration::from_secs(30)) {
             collected.push(frame);
         }
         answered(&collected);

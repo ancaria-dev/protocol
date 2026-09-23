@@ -30,16 +30,16 @@ mod imp {
     use std::fs::File;
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::FromRawHandle;
-    use std::sync::mpsc::{channel, RecvTimeoutError};
+    use std::sync::mpsc::{RecvTimeoutError, channel};
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
     use windows_sys::Win32::Foundation::{
-        GetLastError, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
+        ERROR_PIPE_CONNECTED, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
     };
     use windows_sys::Win32::Security::Cryptography::{
-        BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
     };
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
@@ -125,9 +125,10 @@ mod imp {
             )
         };
         if handle == INVALID_HANDLE_VALUE {
-            return Err(anyhow!("Could not create {name}: Windows error {}", unsafe {
-                GetLastError()
-            }));
+            return Err(anyhow!(
+                "Could not create {name}: Windows error {}",
+                unsafe { GetLastError() }
+            ));
         }
         Ok(handle)
     }
@@ -169,7 +170,7 @@ mod imp {
             match waiting.recv_timeout(Duration::from_millis(50)) {
                 Ok(true) => return Ok(unsafe { File::from_raw_handle(handle.cast()) }),
                 Ok(false) | Err(RecvTimeoutError::Disconnected) => {
-                    return Err(anyhow!("Coderpack could not be connected on {base}"))
+                    return Err(anyhow!("Coderpack could not be connected on {base}"));
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     if !running() {
@@ -213,7 +214,7 @@ mod imp {
 mod imp {
     use std::fs::File;
 
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
 
     pub struct Listener;
 

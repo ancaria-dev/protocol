@@ -8,7 +8,7 @@
 //!     cargo run --example message_check
 
 use std::process::{Child, Command};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{Sender, channel};
 use std::time::Duration;
 
 use frida::{DeviceManager, Frida, Message, ScriptHandler, ScriptOption};
@@ -18,7 +18,9 @@ struct Collector(Sender<String>);
 impl ScriptHandler for Collector {
     fn on_message(&mut self, message: Message, _data: Option<Vec<u8>>) {
         if let Message::Send(send) = message {
-            let _ = self.0.send(format!("{} {}", send.payload.r#type, send.payload.result));
+            let _ = self
+                .0
+                .send(format!("{} {}", send.payload.r#type, send.payload.result));
         }
     }
 }

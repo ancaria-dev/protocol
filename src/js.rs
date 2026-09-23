@@ -289,9 +289,7 @@ fn named_before(text: &[char], at: usize) -> Option<String> {
     }
     let name: String = text[start + 1..end].iter().collect();
     if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         || name.starts_with(|c: char| c.is_ascii_digit())
     {
         return None;
@@ -328,7 +326,10 @@ mod tests {
     #[test]
     fn a_slash_in_a_string_is_not_a_comment() {
         let source = "var url = \"https://ancaria.dev\"; // real\n";
-        assert_eq!(super::compact(source), "var url = \"https://ancaria.dev\";\n");
+        assert_eq!(
+            super::compact(source),
+            "var url = \"https://ancaria.dev\";\n"
+        );
     }
 
     #[test]

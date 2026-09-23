@@ -17,19 +17,19 @@ mod pipe;
 mod router;
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use frida::{Device, DeviceManager, Frida, Script, ScriptOption};
 use serde_json::json;
 
 use codec::Frame;
 use job::Job;
 use jvm::Jvm;
-use router::{from_sal, Pending, Router, ToAgent};
+use router::{Pending, Router, ToAgent, from_sal};
 
 /// How long Coderpack may take to answer an ASK before the host answers for it.
 /// The game thread is stopped for exactly this long in the worst case.
@@ -85,20 +85,50 @@ impl Config {
             // front of the list, which a release build only survived because it
             // wraps around instead of panicking.
             let step = match args[i].as_str() {
-                "--agent" => { agent = Some(PathBuf::from(value)); 2 }
-                "--dist" => { dist = PathBuf::from(value); 2 }
-                "--mods" => { mods = Some(PathBuf::from(value)); 2 }
-                "--enable" => { enable = Some(value); 2 }
-                "--java" => { java = PathBuf::from(value); 2 }
-                "--skip" => { skip = value.split(',').map(str::to_string).collect(); 2 }
-                "--only" => { only = value.split(',').map(str::to_string).collect(); 2 }
+                "--agent" => {
+                    agent = Some(PathBuf::from(value));
+                    2
+                }
+                "--dist" => {
+                    dist = PathBuf::from(value);
+                    2
+                }
+                "--mods" => {
+                    mods = Some(PathBuf::from(value));
+                    2
+                }
+                "--enable" => {
+                    enable = Some(value);
+                    2
+                }
+                "--java" => {
+                    java = PathBuf::from(value);
+                    2
+                }
+                "--skip" => {
+                    skip = value.split(',').map(str::to_string).collect();
+                    2
+                }
+                "--only" => {
+                    only = value.split(',').map(str::to_string).collect();
+                    2
+                }
                 "--no-hook" => {
                     no_hook = value.split(',').map(str::to_string).collect();
                     2
                 }
-                "--trace" => { trace = true; 1 }
-                "--no-ask" => { ask = false; 1 }
-                "--hooks" => { hooks = true; 1 }
+                "--trace" => {
+                    trace = true;
+                    1
+                }
+                "--no-ask" => {
+                    ask = false;
+                    1
+                }
+                "--hooks" => {
+                    hooks = true;
+                    1
+                }
                 other => return Err(anyhow!("Unknown argument: {other}")),
             };
             i += step;
@@ -114,8 +144,19 @@ impl Config {
             dist.join("api.jar").display(),
             dist.join("zygote.jar").display()
         );
-        Ok(Config { agent, classpath,
-                    mods: mods.unwrap_or_else(|| default_mods(&dist)), java, skip, only, ask, no_hook, trace, hooks, enable })
+        Ok(Config {
+            agent,
+            classpath,
+            mods: mods.unwrap_or_else(|| default_mods(&dist)),
+            java,
+            skip,
+            only,
+            ask,
+            no_hook,
+            trace,
+            hooks,
+            enable,
+        })
     }
 }
 
@@ -148,7 +189,10 @@ fn beside_exe(path: PathBuf) -> PathBuf {
     if path.exists() || path.is_absolute() {
         return path;
     }
-    match std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
+    match std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    {
         Some(dir) => dir.join(path),
         None => path,
     }
@@ -200,14 +244,27 @@ fn main() -> Result<()> {
     }
 
     println!("[host] Sacred Mod Loader {}", version());
-    let source = agent::bundle(config.agent.as_deref(), &config.skip, &config.only,
-                               config.ask, &config.no_hook, config.trace)?;
-    println!("[host] Agent bundled: {} bytes from {}{}", source.len(),
-             match &config.agent {
-                 Some(dir) => dir.display().to_string(),
-                 None => agent::origin().to_string(),
-             },
-             if config.ask { "" } else { " (verdicts disabled)" });
+    let source = agent::bundle(
+        config.agent.as_deref(),
+        &config.skip,
+        &config.only,
+        config.ask,
+        &config.no_hook,
+        config.trace,
+    )?;
+    println!(
+        "[host] Agent bundled: {} bytes from {}{}",
+        source.len(),
+        match &config.agent {
+            Some(dir) => dir.display().to_string(),
+            None => agent::origin().to_string(),
+        },
+        if config.ask {
+            ""
+        } else {
+            " (verdicts disabled)"
+        }
+    );
 
     let pending = Pending::default();
     let (work_tx, work_rx) = channel::<ToAgent>();
@@ -215,19 +272,26 @@ fn main() -> Result<()> {
     // The job object is what guarantees the JVM cannot outlive us.
     let job = Job::create();
     if job.is_none() {
-        eprintln!("[host] Couldn’t create a job object. The JVM may keep running if the host crashes");
+        eprintln!(
+            "[host] Couldn’t create a job object. The JVM may keep running if the host crashes"
+        );
     }
 
     let mut jvm = {
         let tx = work_tx.clone();
         let pending = pending.clone();
-        Jvm::spawn(&config.java, &config.classpath, &config.mods,
-                   config.enable.as_deref(), job.as_ref(),
-                   move |frame| {
-                       if let Some(work) = from_sal(&frame, &pending) {
-                           let _ = tx.send(work);
-                       }
-                   })?
+        Jvm::spawn(
+            &config.java,
+            &config.classpath,
+            &config.mods,
+            config.enable.as_deref(),
+            job.as_ref(),
+            move |frame| {
+                if let Some(work) = from_sal(&frame, &pending) {
+                    let _ = tx.send(work);
+                }
+            },
+        )?
     };
     println!("[host] Coderpack started");
 
@@ -279,12 +343,7 @@ fn main() -> Result<()> {
 }
 
 /// Owns the Script and is the only thread that posts to it.
-fn pump<F: Fn() -> bool>(
-    script: &Script,
-    work: &Receiver<ToAgent>,
-    jvm: &mut Jvm,
-    detached: F,
-) {
+fn pump<F: Fn() -> bool>(script: &Script, work: &Receiver<ToAgent>, jvm: &mut Jvm, detached: F) {
     loop {
         match work.recv_timeout(Duration::from_millis(200)) {
             Ok(item) => post(script, item),
@@ -338,16 +397,18 @@ fn post(script: &Script, item: ToAgent) {
 /// Answers on Coderpack's behalf when a mod is too slow.  A hung mod must never hang
 /// the game, so it loses its veto instead.
 fn spawn_watchdog(pending: Pending, work: std::sync::mpsc::Sender<ToAgent>) {
-    thread::spawn(move || loop {
-        thread::sleep(VERDICT_DEADLINE / 2);
-        for seq in pending.overdue(VERDICT_DEADLINE) {
-            eprintln!("[host] Coderpack did not answer request {seq} in time. Continuing");
-            pending.close(seq);
-            let _ = work.send(ToAgent::Verdict {
-                seq,
-                cancel: false,
-                set: Vec::new(),
-            });
+    thread::spawn(move || {
+        loop {
+            thread::sleep(VERDICT_DEADLINE / 2);
+            for seq in pending.overdue(VERDICT_DEADLINE) {
+                eprintln!("[host] Coderpack did not answer request {seq} in time. Continuing");
+                pending.close(seq);
+                let _ = work.send(ToAgent::Verdict {
+                    seq,
+                    cancel: false,
+                    set: Vec::new(),
+                });
+            }
         }
     });
 }
