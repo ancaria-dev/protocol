@@ -250,7 +250,11 @@ fn main() -> Result<()> {
             "Couldn’t attach to the game. Run this terminal as Administrator \
              if the game is running with elevated privileges",
         )?;
-        let mut options = ScriptOption::new().set_name("sal");
+        // Terminated by hand: set_name hands frida the &str's pointer as a C
+        // string, so without the NUL it reads on into whatever the linker put
+        // after it.  Bytes that are not UTF-8 make the agent drop the session,
+        // and create_script fails with "The connection is closed".
+        let mut options = ScriptOption::new().set_name("sal\0");
         let mut script = session.create_script(&source, &mut options)?;
         script.handle_message(Router {
             to_sal: jvm.sender(),
