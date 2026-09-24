@@ -9,48 +9,58 @@
 
 [Русский](README.md) · [Deutsch](README.DE.md)
 
-# Sacred communication protocol
+# Sacred Communication Protocol
 
-Sacred Gold is a 32-bit game from 2004. The mod loader uses a 64-bit JVM, so
-the two cannot share a process. This repository contains the line protocol
-between them and the Windows host that carries it.
+The host that connects Sacred Gold to the mods running in Java. You need this
+repository if you work on the loader itself, not to write a mod.
 
-Mods run in a separate `java.exe`, while Frida injects the JavaScript agent
-into the game. Agent and host exchange Frida messages. Host and JVM exchange
-newline-terminated UTF-8 frames over two named pipes the host creates before
-it starts the JVM: `<base>.in` toward the JVM and `<base>.out` back. The JVM's
-own standard I/O carries no frames and belongs to the mods. The agent never
-talks to the JVM directly. [docs/PROTOCOL.md](docs/PROTOCOL.md) defines the
-frame format.
+Sacred Gold is a 32-bit game, and the loader's JVM is 64-bit, so they can't
+share a process. `protocol.exe` waits for the game, injects the JavaScript
+agent from [coderpack](https://github.com/ancaria-dev/coderpack) with Frida,
+and starts the JVM in a separate `java.exe`. Then it carries messages both
+ways.
 
-The executable waits for the game, injects the agent from the
-[coderpack](https://github.com/ancaria-dev/coderpack) repository, starts
-`dev.ancaria.coderpack.zygote.Main` with `api.jar` and `zygote.jar` on its
-classpath, and passes messages in both directions. It writes nothing to the game's files. The hooks live in memory and
-disappear when the game process exits.
+The agent talks to the host through Frida messages. The host talks to the JVM
+in text frames, one UTF-8 line each, over two named pipes: `<base>.in` toward
+the JVM and `<base>.out` back. The agent never talks to the JVM directly.
+[docs/PROTOCOL.md](docs/PROTOCOL.md) defines the frames.
 
-The agent's JavaScript is inside this executable: the modules are minified and
-linked in at build time, and the script Frida injects is assembled in memory
-from them. No JavaScript is written to the game folder, to a temporary
-directory, or anywhere else. `--agent <path>` reads a folder instead, which is
-what somebody editing the agent wants.
+The agent's JavaScript is built into `protocol.exe`. The host assembles the
+injected script in memory and writes nothing to the game folder or anywhere
+else. The hooks live only in the game's memory and disappear when it exits.
 
-## Running it
+## Getting started
 
-The launcher normally starts the host. You can also run it directly from the
+The launcher normally starts the host. You can also run it by hand from the
 installed folder:
 
 ```
 <Sacred Gold>\launcher\protocol.exe
 ```
 
-Run it elevated if the game is elevated. Frida cannot attach across that line,
-and the host will keep waiting even though it can see the process. Paths
-resolve beside the executable, so no arguments are normally required.
+It finds its paths next to the executable, so it needs no arguments. If the
+game runs as administrator, run the host as administrator too. Otherwise Frida
+can't attach, and the host keeps waiting even though it sees the process.
 
-## What the wire looks like
+The host looks for Java in this order: `java/bin/java.exe` next to itself
+(where the launcher unpacks a downloaded JDK), `%JAVA_HOME%\bin\java.exe`,
+then `java` on `PATH`. The launcher usually passes its Java with `--java`. A
+real run needs JDK 21 or newer.
 
-A session can contain these three frames:
+| Flag | What it does |
+|---|---|
+| `--enable <ids>` | Loads the mods with these comma-separated IDs |
+| `--java <path>` | Uses this Java executable |
+| `--dist <path>` | Reads the JARs from this folder |
+| `--mods <path>` | Reads mods from this folder |
+| `--agent <path>` | Reads the agent from a folder instead of the built-in one, handy while you edit it |
+| `--hooks` | Prints the hook sites as JSON and exits |
+
+An unknown argument stops the host with an error.
+
+## Frames
+
+Here's part of a session:
 
 ```
 EVT 2 hero.captured class=9 className=Daemon level=142 hp=27127 maxHp=27127
@@ -58,129 +68,126 @@ ASK 3 health.damage entity=player damage=553 current=19849 next=19296 max=26999
 END 3 set.next=19849
 ```
 
-`EVT` reports an event and expects no reply. `ASK` comes from a hook placed
-before a write, and the game thread stops while it waits. `END` supplies the
-answer. It can allow the write, cancel it, or replace fields. In this example,
-the replacement undoes the damage before the game commits it. A mod can also
-send a command on its own:
+`EVT` reports an event and expects no answer. `ASK` comes from a hook placed
+before a write, and the game thread stops until it gets an answer. `END` is
+that answer: it allows the write, cancels it, or replaces fields. Here
+`set.next=19849` keeps the old health, so the damage never lands.
+
+A mod can also send a command on its own:
 
 ```
 CMD 1 player.gold
 RES 1 ok=1 gold=104233
 ```
 
-`LOG` and `BYE` complete the frame set. Keys and values percent-encode only the
-characters that would break the format: `%` as `%25`, space as `%20`, `=` as
-`%3D`, LF as `%0A`, and CR as `%0D`. Every other character remains literal,
-which keeps live sessions readable in a terminal.
+`BYE` ends the session. Keys and values percent-encode only the characters
+that would break a frame: `%`, space, `=`, LF, and CR. Everything else stays
+literal, so you can read a live session in a terminal.
 
-Because `ASK` blocks the game thread, three rules apply:
+### Rules for an `ASK`
 
-- **A verdict has a deadline.** The watchdog checks every 125 ms and treats an
-  `ASK` as overdue once it is older than 250 ms. It then queues `END ok=1` and
-  logs the sequence number. The fallback is usually queued 250 to 375 ms after
-  the request, plus scheduling and poster-loop delay. A slow mod loses its veto
-  for that request. If the JVM exits, the host disables further `ASK` waits
-  before shutting down.
-- **Whatever answers an `ASK` must not read replies on the same thread.** A mod
-  calling back into the game from inside an event handler deadlocks it. Both
-  sides split reading from dispatch for that reason.
-- **Frames have a channel of their own, not stdout.** A mod that prints with
-  `System.out` therefore breaks nothing, and its output reaches the host's
-  console. A line the host cannot read is reported as unparseable Coderpack
-  output. The loader provides its own logging API, which prefixes the mod id.
+An `ASK` holds the game thread, so three rules apply:
 
-On Windows, the host tries to place the JVM in a job object configured with
-`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. The game process never joins that job.
-When job creation, limit configuration, and process assignment all succeed,
-closing the host kills the JVM. A creation or configuration failure produces a
-warning and the host continues. Process assignment failure is currently silent,
-so the kill-on-close guarantee is conditional.
+- **An answer has a deadline.** The watchdog checks every 125 ms and marks an
+  `ASK` overdue once it's older than 250 ms. The host then answers `END ok=1`
+  for the mod and logs the sequence number. That usually happens 250–375 ms
+  after the request, plus scheduler and poster-loop delay. The slow mod loses
+  its veto for that request. If the JVM exits, the host stops waiting for
+  answers and shuts down.
+- **Don't read replies on the thread that answers.** A mod that calls back into
+  the game from an event handler would deadlock it. Both sides keep reading
+  and dispatch on separate threads for that reason.
+- **Frames have their own channel.** A mod that prints with `System.out`
+  breaks nothing: its output lands in the host console. The host reports a
+  line it can't parse as unreadable Coderpack output. For logging, use the
+  loader's API, which prefixes each line with the mod ID.
+
+### When the host exits
+
+On Windows the host tries to put the JVM in a job object with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so the JVM dies with the host. The game
+never joins that job. The guarantee holds only if creating the job, setting
+its limit, and assigning the JVM all succeed. The first two failures print a
+warning. An assignment failure is silent for now.
 
 ## When the game crashes
 
-These flags isolate a failing hook without requiring a rebuild. Restart the
-game between attempts. An injected agent is not reliably unloaded when only
-the host exits, so another host can try to patch an already hooked instruction.
+These flags isolate a failing hook without a rebuild:
 
 | Flag | What it does |
 |---|---|
-| `--skip gold,position` | leave those agent modules out |
-| `--only health` | load nothing else (`core`, `bus`, and `names` always load) |
-| `--no-hook goldEpilogue` | keep the module, skip that one attach site |
-| `--trace` | every hook announces itself as it runs |
-| `--no-ask` | hooks stay installed, verdicts are disabled |
-| `--agent <path>` | read the agent out of a folder instead of the built-in one |
-| `--hooks` | print the hook sites as JSON and stop |
+| `--skip gold,position` | Leaves these agent modules out |
+| `--only health` | Loads only this module. `core`, `bus`, and `names` always load |
+| `--no-hook goldEpilogue` | Keeps the module but skips this one site |
+| `--trace` | Logs every hook as it fires |
+| `--no-ask` | Keeps the hooks but never waits for an answer |
 
-Module names are the agent's file names without the number prefix. `--agent`,
-`--dist`, `--mods`, and `--java` override the paths that the host discovers.
-`--hooks` is how the launcher draws its list of switchable sites: it asks the
-copy of the host in the game folder, because that is what knows which agent is
-in it.
-`--enable` selects the mod IDs to load. Without `--java`, the host first checks
-for `java/bin/java.exe` beside the executable, where the launcher installs a
-downloaded JDK. It then checks `%JAVA_HOME%\bin\java.exe` before using `java`
-on `PATH`. The launcher normally passes its downloaded Java through `--java`.
-A real host run requires JDK 21 or newer. Unknown arguments stop startup with
-an error.
+A module name is the agent file name without its number prefix. Restart the
+game between attempts. The injected agent may stay in the game after the host
+exits, and a new host would then patch an instruction that's already hooked.
+
+The launcher builds its list of switchable sites from `--hooks`. It asks the
+`protocol.exe` in the game folder, because only that copy knows which agent is
+inside it.
 
 ## Building
 
+You need Rust 1.98 with the MSVC toolchain and LLVM: `frida-sys` runs bindgen,
+and bindgen needs libclang. `.cargo/config.toml` points `LIBCLANG_PATH` at
+`C:\Program Files\LLVM\bin` unless the variable is already set.
+
 ```
 cargo build --release
+cargo test --release
 ```
 
-The build needs the agent, and takes it from the first of these it finds:
-`$PROTOCOL_AGENT`, the sibling `../coderpack/agent/src`, or the `agent.zip`
-asset of the coderpack release pinned in `dependencies.json`, which it caches
-under `build/agent/`. The third is what makes a lone clone build: coderpack
-generates its address table rather than committing it, so a checkout is not
-always enough and a release asset always is. The host prints which one it was
-built from as it starts.
+The result is `target/release/protocol.exe`. The `LNK4098` link warning comes
+from frida-core's static CRT meeting Rust's dynamic one. It's expected.
 
-The result is `target/release/protocol.exe`. You need Rust 1.98 with the MSVC
-toolchain and an LLVM install, because `frida-sys` runs bindgen and bindgen
-needs libclang. `.cargo/config.toml` points `LIBCLANG_PATH` at
-`C:\Program Files\LLVM\bin`, but an existing environment variable takes
-precedence. The `LNK4098` link warning comes from frida-core's static CRT
-conflicting with Rust's dynamic CRT. It is expected.
+The build takes the agent from the first source it finds:
 
-`vendor/frida` is a patched copy of the `frida` crate 0.17.2. For every message
-that is not `frida:rpc`, upstream casts the callback's `user_data` to the
-caller's handler type even though it is a different type. As a result, the
-first `send()` from an agent faulted the host with `0xC0000005`, and no message
-arrived. `vendor/README.md` documents the patch. This command needs `python` on
-`PATH`, attaches to a throwaway process, and waits up to 5 seconds for a
-message. It does not need the game:
+1. `$PROTOCOL_AGENT`
+2. The sibling `../coderpack/agent/src`
+3. The `agent.zip` of the coderpack release pinned in `dependencies.json`,
+   cached under `build/agent/`
+
+The third source is what lets a lone clone build. coderpack generates its
+address table instead of committing it, so a checkout isn't always enough, but
+a release asset is. The host prints its agent's source at startup.
+
+The tests cover the frame codec, the minifier, the agent bundler, and the JVM
+boundary. Two end-to-end tests start a real Coderpack JVM with no mods and
+check that every `ASK` gets a frame the host can parse. They take the most
+recently built `api` and `zygote` JARs from a coderpack checkout next to this
+one or from `~/.m2/repository/dev/ancaria/coderpack`. Without them, the tests
+print a skip message and pass, so a Rust-only checkout needs no JDK.
+
+`vendor/frida` is a patched copy of the `frida` crate 0.17.2. Upstream casts a
+callback's `user_data` to the wrong type for every message except
+`frida:rpc`, and the agent's first `send()` crashed the host with
+`0xC0000005`. `vendor/README.md` describes the patch. This check needs
+`python` on `PATH` but not the game:
 
 ```
 cargo run --example message_check
 ```
 
-`cargo test --release` currently runs nineteen tests covering the frame codec,
-the minifier, the agent bundler, and the JVM boundary. The folder-reading
-bundler tests use the repository's fixture agent in `tests/agent`, so they never
-read `../coderpack`; the rest check the agent that was linked in, whichever of
-the three sources it came from. The
-end-to-end test starts a real Coderpack JVM with no mods and checks that every
-`ASK` receives a frame the host can parse. It uses the lexically newest `api`
-and `zygote` JARs it can find in a coderpack checkout beside this repository or
-in the local Maven repository
-(`~/.m2/repository/dev/ancaria/coderpack`). If neither location contains the
-jars, the test prints a skip message and passes. A Rust-only checkout therefore
-needs no JDK.
+## Releases
 
-CI runs on Windows for pushes to `master`, pull requests, and manual dispatch.
-It treats `cargo fmt --check` as non-blocking, then runs the release build and
-release tests. Every run uploads `protocol.exe` as a workflow artifact. On a
-successful push to `master`, CI reads `version` from `Cargo.toml`. If the
-remote has no `v<version>` tag, the release step creates that tag and a release
-containing `target/release/protocol.exe`. A version change ships only after
-that publishing step succeeds. When the launcher builds without a sibling
-protocol checkout, it downloads this release asset.
+CI runs on Windows for every push to `master`, every pull request, and on
+demand. It builds and tests in release mode and uploads `protocol.exe` as a
+workflow artifact. `cargo fmt --check` runs too but doesn't fail the build.
+
+On `master`, CI reads `version` from `Cargo.toml`. If the `v<version>` tag
+doesn't exist yet, CI creates it and publishes a release with `protocol.exe`.
+To release, raise the version with `pwsh tools/version.ps1 <version>`. The
+launcher downloads this asset when it builds without a protocol checkout next
+to it.
+
+An agent change reaches players only through a release of this repository.
+[CONTRIBUTING](https://github.com/ancaria-dev/.github/blob/master/CONTRIBUTING.EN.md)
+lists the release order across the whole loader.
 
 ## License
 
-The project uses the MIT License. See [LICENSE](LICENSE).
-
+MIT, see [LICENSE](LICENSE).
